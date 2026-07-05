@@ -1,0 +1,13 @@
+{
+  "enable_operate": false,
+  "max_result_chars": 20000,
+  "swarms": {
+    "bitprime": {
+      "dashboard_url": "http://127.0.0.1:4001",
+      "dashboard_token_env": "BITPRIME_DASH_TOKEN",
+      "engine_url": "http://127.0.0.1:4000",
+      "config_token_env": "BITPRIME_CONFIG_TOKEN",
+      "operate_token_env": "BITPRIME_OPERATE_TOKEN"
+    }
+  }
+}
