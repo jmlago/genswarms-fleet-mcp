@@ -25,7 +25,9 @@ export function startFakeFleet({ dashToken, configToken, operateToken }) {
 
       // ── dashboard surface (bearer = consumer token) ────────────────────
       if (req.method === "GET" && p.startsWith("/api/swarms/fix/")) {
-        if (auth !== `Bearer ${dashToken}` && !p.includes("/overlay")) {
+        // /overlay and /agents/* are ENGINE routes (their own tokens below) —
+        // the single fake port serves both surfaces
+        if (auth !== `Bearer ${dashToken}` && !p.includes("/overlay") && !p.includes("/agents")) {
           return send(401, { error: "unauthorized" });
         }
         if (p.endsWith("/dashboard")) {
@@ -58,6 +60,18 @@ export function startFakeFleet({ dashToken, configToken, operateToken }) {
       if (req.method === "GET" && p === "/api/swarms/fix/overlay") {
         if (auth !== `Bearer ${configToken}`) return send(401, { error: "Invalid or missing API token" });
         return send(200, { swarm: "fix", events: [{ op: "update_config", payload: {} }] });
+      }
+      if (req.method === "GET" && p === "/api/swarms/fix/agents") {
+        if (auth !== `Bearer ${operateToken}`) return send(401, { error: "Invalid or missing API token" });
+        return send(200, { agents: [{ name: "quoter", state: "idle", backend: "bwrap" }] });
+      }
+      if (req.method === "GET" && p.startsWith("/api/swarms/fix/agents/") && p.endsWith("/history")) {
+        if (auth !== `Bearer ${operateToken}`) return send(401, { error: "Invalid or missing API token" });
+        return send(200, { history: [{ type: "incoming", from: "scope", content: "task" }] });
+      }
+      if (req.method === "GET" && p.startsWith("/api/swarms/fix/agents/") && p.endsWith("/logs")) {
+        if (auth !== `Bearer ${operateToken}`) return send(401, { error: "Invalid or missing API token" });
+        return send(200, { logs: [{ role: "user", content: "task" }] });
       }
       if (req.method === "POST" && p === "/api/swarms/fix/agents/quoter/task") {
         if (auth !== `Bearer ${operateToken}`) return send(401, { error: "Invalid or missing API token" });

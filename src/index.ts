@@ -163,6 +163,53 @@ if (anySwarmHas(fleet, "engine_url")) {
       engine(swarm, "GET", `/api/swarms/${swarm}/overlay`, "config_token_env"),
     ),
   );
+
+  // ── tier 2.5: agent debugging (engine read API; needs the full engine token,
+  // not the config-scoped one — read-only, so not gated by enable_operate).
+  // The missing surface when diagnosing WHY an agent misbehaves: what tasks it
+  // received, what it answered, and its conversation log — dashboards only
+  // show sessions, not agent turns.
+
+  server.tool(
+    "list_agents",
+    "Agents of a swarm with live state (engine view): backend, state, inbox size, last activity.",
+    { swarm: swarmParam },
+    guarded(async ({ swarm }) =>
+      engine(swarm, "GET", `/api/swarms/${swarm}/agents`, "operate_token_env"),
+    ),
+  );
+
+  server.tool(
+    "get_agent_history",
+    "An agent's message history (incoming tasks/asks and outgoing turns) — the first stop when an agent is silent or wrong.",
+    {
+      swarm: swarmParam,
+      agent: z.string().describe("Agent name, e.g. diagnostico"),
+      limit: z.number().int().positive().max(500).optional(),
+    },
+    guarded(async ({ swarm, agent, limit }) =>
+      engine(
+        swarm,
+        "GET",
+        `/api/swarms/${swarm}/agents/${encodeURIComponent(agent)}/history${limit ? `?limit=${limit}` : ""}`,
+        "operate_token_env",
+      ),
+    ),
+  );
+
+  server.tool(
+    "get_agent_logs",
+    "An agent's conversation log (user/assistant/tool lines from its runtime session).",
+    { swarm: swarmParam, agent: z.string().describe("Agent name") },
+    guarded(async ({ swarm, agent }) =>
+      engine(
+        swarm,
+        "GET",
+        `/api/swarms/${swarm}/agents/${encodeURIComponent(agent)}/logs`,
+        "operate_token_env",
+      ),
+    ),
+  );
 }
 
 // ── tier 3: operate (opt-in; full engine token) ──────────────────────────────

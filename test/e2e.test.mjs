@@ -115,12 +115,15 @@ test("tiers 1+2 registered, tier 3 absent when enable_operate=false", async () =
     await mcp.start();
     const names = await mcp.toolNames();
     assert.deepEqual(names, [
+      "get_agent_history",
+      "get_agent_logs",
       "get_config",
       "get_dashboard",
       "get_events",
       "get_overlay",
       "get_session_history",
       "get_session_logs",
+      "list_agents",
       "patch_object_config",
     ]);
   } finally {
@@ -168,6 +171,36 @@ test("observe + configure flows: tokens routed per tier, gates relayed", async (
     assert.equal(dashCall.auth, `Bearer ${DASH}`);
     const patchCall = fleet.calls.find((c) => c.method === "PATCH");
     assert.equal(patchCall.auth, `Bearer ${CFG}`);
+  } finally {
+    mcp.stop();
+  }
+});
+
+test("agent debugging tier: engine reads with the full token, no enable_operate needed", async () => {
+  const mcp = new McpChild(writeFleetConfig({ enableOperate: false }));
+  try {
+    await mcp.start();
+
+    const agents = await mcp.call("list_agents", { swarm: "fix" });
+    assert.equal(agents.isError, false);
+    assert.match(agents.text, /"quoter"/);
+
+    const history = await mcp.call("get_agent_history", { swarm: "fix", agent: "quoter", limit: 5 });
+    assert.equal(history.isError, false);
+    assert.match(history.text, /"incoming"/);
+
+    const logs = await mcp.call("get_agent_logs", { swarm: "fix", agent: "quoter" });
+    assert.equal(logs.isError, false);
+    assert.match(logs.text, /"user"/);
+
+    // routed with the FULL engine token (config-scoped token covers only config routes)
+    const historyCall = fleet.calls.find((c) => c.path.includes("/agents/quoter/history"));
+    assert.equal(historyCall.auth, `Bearer ${OP}`);
+
+    // a dashboard-only swarm errors cleanly
+    const noEngine = await mcp.call("list_agents", { swarm: "other" });
+    assert.equal(noEngine.isError, true);
+    assert.match(noEngine.text, /no engine_url/);
   } finally {
     mcp.stop();
   }
