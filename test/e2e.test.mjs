@@ -6,7 +6,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -185,6 +185,42 @@ test("multi-swarm: unknown swarm and missing-tier swarm error cleanly", async ()
     const noEngine = await mcp.call("get_overlay", { swarm: "other" });
     assert.equal(noEngine.isError, true);
     assert.match(noEngine.text, /no engine_url/);
+  } finally {
+    mcp.stop();
+  }
+});
+
+test("fleet.json hot-reload: a swarm added mid-session resolves without restart", async () => {
+  const configPath = writeFleetConfig({ enableOperate: false });
+  const mcp = new McpChild(configPath);
+  try {
+    await mcp.start();
+
+    const before = await mcp.call("get_dashboard", { swarm: "late" });
+    assert.equal(before.isError, true);
+    assert.match(before.text, /unknown swarm 'late'/);
+
+    // add "late" to the fleet file the server already loaded
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    cfg.swarms.late = {
+      dashboard_url: `http://127.0.0.1:${fleet.port}`,
+      dashboard_token_env: "T_DASH",
+    };
+    writeFileSync(configPath, JSON.stringify(cfg));
+    // force a distinct mtime even on coarse-grained filesystems
+    utimesSync(configPath, new Date(), new Date(Date.now() + 2000));
+
+    // resolved and routed: the fake (which only serves "fix" paths) answers a
+    // relayed HTTP 404 — anything but "unknown swarm" proves the reload
+    const after = await mcp.call("get_dashboard", { swarm: "late" });
+    assert.doesNotMatch(after.text, /unknown swarm/, `expected hot-reloaded swarm to route: ${after.text}`);
+    assert.match(after.text, /404/);
+
+    // a BROKEN edit must not blind the live session: last good fleet stays
+    writeFileSync(configPath, "{ not json");
+    utimesSync(configPath, new Date(), new Date(Date.now() + 4000));
+    const resilient = await mcp.call("get_dashboard", { swarm: "late" });
+    assert.doesNotMatch(resilient.text, /unknown swarm|JSON/);
   } finally {
     mcp.stop();
   }

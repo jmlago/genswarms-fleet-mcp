@@ -15,7 +15,7 @@
  * cannot discover them.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 export interface SwarmSpec {
   dashboard_url?: string;
@@ -43,6 +43,27 @@ export function loadFleet(): Fleet {
     throw new Error("fleet config has no swarms");
   }
   return fleet;
+}
+
+// Hot-reload seam: per-CALL lookups re-read the file when its mtime moves, so
+// a swarm added to the fleet is visible without restarting the server. Tool
+// REGISTRATION (tier gating, enable_operate) deliberately stays startup-time:
+// tier-3 tools must not appear because a file changed under a live session.
+// A bad edit keeps the last good fleet (a running session never goes blind).
+let cached: { fleet: Fleet; mtimeMs: number } | undefined;
+
+export function currentFleet(): Fleet {
+  const path = process.env.FLEET_MCP_CONFIG;
+  if (!path) return loadFleet(); // unreachable in practice; keeps the error message
+  try {
+    const mtimeMs = statSync(path).mtimeMs;
+    if (!cached || cached.mtimeMs !== mtimeMs) {
+      cached = { fleet: loadFleet(), mtimeMs };
+    }
+  } catch (e) {
+    if (!cached) throw e;
+  }
+  return cached.fleet;
 }
 
 export function swarmSpec(fleet: Fleet, swarm: string): SwarmSpec {

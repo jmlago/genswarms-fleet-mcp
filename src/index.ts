@@ -24,7 +24,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { anySwarmHas, loadFleet, swarmSpec, token } from "./config.js";
+import { anySwarmHas, currentFleet, loadFleet, swarmSpec, token } from "./config.js";
 import { errorResult, request, toToolResult } from "./http.js";
 
 const fleet = loadFleet();
@@ -39,7 +39,7 @@ const swarmParam = z
 // ── plumbing ─────────────────────────────────────────────────────────────────
 
 async function dashboard(swarm: string, path: string, query?: Record<string, string>) {
-  const spec = swarmSpec(fleet, swarm);
+  const spec = swarmSpec(currentFleet(), swarm);
   if (!spec.dashboard_url) return errorResult(`swarm '${swarm}' has no dashboard_url (tier 1 unavailable)`);
   const qs = query ? `?${new URLSearchParams(query)}` : "";
   const res = await request("GET", spec.dashboard_url, path + qs, token(spec.dashboard_token_env));
@@ -53,7 +53,7 @@ async function engine(
   tokenEnv: "config_token_env" | "operate_token_env",
   json?: unknown,
 ) {
-  const spec = swarmSpec(fleet, swarm);
+  const spec = swarmSpec(currentFleet(), swarm);
   if (!spec.engine_url) return errorResult(`swarm '${swarm}' has no engine_url (tiers 2/3 unavailable)`);
   const res = await request(method, spec.engine_url, path, token(spec[tokenEnv]), json);
   return toToolResult(res, MAX_CHARS);
