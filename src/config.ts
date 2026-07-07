@@ -18,6 +18,10 @@
 import { readFileSync, statSync } from "node:fs";
 
 export interface SwarmSpec {
+  /** Swarm name on the remote wire (URL paths). Defaults to the fleet key.
+   * Set it when two deployments of the SAME swarm (say local + prod, both
+   * "wingston" on their engines) need distinct fleet keys. */
+  name?: string;
   dashboard_url?: string;
   dashboard_token_env?: string;
   engine_url?: string;
