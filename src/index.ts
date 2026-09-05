@@ -30,7 +30,7 @@ import { errorResult, request, toToolResult } from "./http.js";
 const fleet = loadFleet();
 const MAX_CHARS = fleet.max_result_chars ?? 20_000;
 
-const server = new McpServer({ name: "genswarms-fleet-mcp", version: "0.1.0" });
+const server = new McpServer({ name: "genswarms-fleet-mcp", version: "0.2.0" });
 
 const swarmParam = z
   .string()
@@ -46,6 +46,14 @@ async function dashboard(swarm: string, path: string, query?: Record<string, str
   return toToolResult(res, MAX_CHARS);
 }
 
+async function dashboardFleet(path: string) {
+  const latest = currentFleet();
+  const spec = [latest.defaults, ...Object.values(latest.swarms)].find((s) => s?.dashboard_url);
+  if (!spec?.dashboard_url) return errorResult("fleet has no dashboard_url (tier 1 unavailable)");
+  const res = await request("GET", spec.dashboard_url, path, token(spec.dashboard_token_env));
+  return toToolResult(res, MAX_CHARS);
+}
+
 async function engine(
   swarm: string,
   method: string,
@@ -53,7 +61,9 @@ async function engine(
   tokenEnv: "config_token_env" | "operate_token_env",
   json?: unknown,
 ) {
-  const spec = swarmSpec(currentFleet(), swarm);
+  const latest = currentFleet();
+  if (fleet.read_only || latest.read_only) return errorResult("read_only forbids engine tools");
+  const spec = swarmSpec(latest, swarm);
   if (!spec.engine_url) return errorResult(`swarm '${swarm}' has no engine_url (tiers 2/3 unavailable)`);
   const res = await request(method, spec.engine_url, path, token(spec[tokenEnv]), json);
   return toToolResult(res, MAX_CHARS);
@@ -69,9 +79,35 @@ function guarded<A extends unknown[]>(fn: (...args: A) => Promise<any>) {
   };
 }
 
+async function agentRead(swarm: string, path: string) {
+  const latest = currentFleet();
+  const spec = swarmSpec(latest, swarm);
+
+  if (spec.dashboard_url) {
+    const res = await request("GET", spec.dashboard_url, path, token(spec.dashboard_token_env));
+    return toToolResult(res, MAX_CHARS);
+  }
+
+  if (!fleet.read_only && !latest.read_only && spec.engine_url) {
+    const res = await request("GET", spec.engine_url, path, token(spec.operate_token_env));
+    return toToolResult(res, MAX_CHARS);
+  }
+
+  return errorResult(
+    `swarm '${swarm}' has no dashboard_url${latest.read_only ? " (read_only forbids engine fallback)" : " or engine_url"}`,
+  );
+}
+
 // ── tier 1: observe (dashboard read API) ─────────────────────────────────────
 
 if (anySwarmHas(fleet, "dashboard_url")) {
+  server.tool(
+    "list_swarms",
+    "Discover every swarm exposed by the shared read-only dashboard endpoint.",
+    {},
+    guarded(async () => dashboardFleet("/api/swarms")),
+  );
+
   server.tool(
     "get_dashboard",
     "Live snapshot of a swarm: status, agents/objects summary, pool, sessions, warnings, topology edges.",
@@ -133,7 +169,7 @@ if (anySwarmHas(fleet, "dashboard_url")) {
 
 // ── tier 2: configure (engine config surface, narrow token) ─────────────────
 
-if (anySwarmHas(fleet, "engine_url")) {
+if (!fleet.read_only && anySwarmHas(fleet, "engine_url")) {
   server.tool(
     "patch_object_config",
     "Hot-edit an object's config. Schema-gated SERVER-SIDE: only keys the package marked x-mutable are accepted (422 otherwise); the object restarts with the merged config, topology intact, and the change lands in the overlay audit trail. Works with the config-scoped engine token.",
@@ -164,18 +200,18 @@ if (anySwarmHas(fleet, "engine_url")) {
     ),
   );
 
-  // ── tier 2.5: agent debugging (engine read API; needs the full engine token,
-  // not the config-scoped one — read-only, so not gated by enable_operate).
-  // The missing surface when diagnosing WHY an agent misbehaves: what tasks it
-  // received, what it answered, and its conversation log — dashboards only
-  // show sessions, not agent turns.
+}
+
+// ── read-only agent debugging. Prefer the dashboard's token-gated diagnostic
+// routes. Legacy fleets may fall back to the engine only when read_only is off.
+if (anySwarmHas(fleet, "dashboard_url") || (!fleet.read_only && anySwarmHas(fleet, "engine_url"))) {
 
   server.tool(
     "list_agents",
     "Agents of a swarm with live state (engine view): backend, state, inbox size, last activity.",
     { swarm: swarmParam },
     guarded(async ({ swarm }) =>
-      engine(swarm, "GET", `/api/swarms/${swarm}/agents`, "operate_token_env"),
+      agentRead(swarm, `/api/swarms/${swarm}/agents`),
     ),
   );
 
@@ -188,11 +224,9 @@ if (anySwarmHas(fleet, "engine_url")) {
       limit: z.number().int().positive().max(500).optional(),
     },
     guarded(async ({ swarm, agent, limit }) =>
-      engine(
+      agentRead(
         swarm,
-        "GET",
         `/api/swarms/${swarm}/agents/${encodeURIComponent(agent)}/history${limit ? `?limit=${limit}` : ""}`,
-        "operate_token_env",
       ),
     ),
   );
@@ -202,19 +236,14 @@ if (anySwarmHas(fleet, "engine_url")) {
     "An agent's conversation log (user/assistant/tool lines from its runtime session).",
     { swarm: swarmParam, agent: z.string().describe("Agent name") },
     guarded(async ({ swarm, agent }) =>
-      engine(
-        swarm,
-        "GET",
-        `/api/swarms/${swarm}/agents/${encodeURIComponent(agent)}/logs`,
-        "operate_token_env",
-      ),
+      agentRead(swarm, `/api/swarms/${swarm}/agents/${encodeURIComponent(agent)}/logs`),
     ),
   );
 }
 
 // ── tier 3: operate (opt-in; full engine token) ──────────────────────────────
 
-if (fleet.enable_operate && anySwarmHas(fleet, "engine_url")) {
+if (!fleet.read_only && fleet.enable_operate && anySwarmHas(fleet, "engine_url")) {
   server.tool(
     "send_task",
     "Send a task to an agent (the test/probe surface). The agent processes it like any routed message; read the outcome via get_events / get_session_logs.",

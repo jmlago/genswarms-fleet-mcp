@@ -25,13 +25,22 @@ before(async () => {
 
 after(() => fleet.server.close());
 
-function writeFleetConfig({ enableOperate }) {
+function writeFleetConfig({ enableOperate, readOnly = false, defaults = false }) {
   const dir = mkdtempSync(join(tmpdir(), "fleet-mcp-"));
   const path = join(dir, "fleet.json");
   writeFileSync(
     path,
     JSON.stringify({
+      read_only: readOnly,
       enable_operate: enableOperate,
+      ...(defaults
+        ? {
+            defaults: {
+              dashboard_url: `http://127.0.0.1:${fleet.port}`,
+              dashboard_token_env: "T_DASH",
+            },
+          }
+        : {}),
       swarms: {
         fix: {
           dashboard_url: `http://127.0.0.1:${fleet.port}`,
@@ -124,6 +133,7 @@ test("tiers 1+2 registered, tier 3 absent when enable_operate=false", async () =
       "get_session_history",
       "get_session_logs",
       "list_agents",
+      "list_swarms",
       "patch_object_config",
     ]);
   } finally {
@@ -176,7 +186,7 @@ test("observe + configure flows: tokens routed per tier, gates relayed", async (
   }
 });
 
-test("agent debugging tier: engine reads with the full token, no enable_operate needed", async () => {
+test("agent debugging prefers the read-only dashboard token", async () => {
   const mcp = new McpChild(writeFleetConfig({ enableOperate: false }));
   try {
     await mcp.start();
@@ -193,14 +203,42 @@ test("agent debugging tier: engine reads with the full token, no enable_operate 
     assert.equal(logs.isError, false);
     assert.match(logs.text, /"user"/);
 
-    // routed with the FULL engine token (config-scoped token covers only config routes)
+    // routed through the dashboard, so the MCP process does not need full engine authority
     const historyCall = fleet.calls.find((c) => c.path.includes("/agents/quoter/history"));
-    assert.equal(historyCall.auth, `Bearer ${OP}`);
+    assert.equal(historyCall.auth, `Bearer ${DASH}`);
 
     // a dashboard-only swarm errors cleanly
     const noEngine = await mcp.call("list_agents", { swarm: "other" });
     assert.equal(noEngine.isError, true);
-    assert.match(noEngine.text, /no engine_url/);
+    assert.match(noEngine.text, /404/);
+  } finally {
+    mcp.stop();
+  }
+});
+
+test("read_only + defaults discovers new swarms and removes every write tool", async () => {
+  const mcp = new McpChild(
+    writeFleetConfig({ enableOperate: true, readOnly: true, defaults: true }),
+  );
+
+  try {
+    await mcp.start();
+    const names = await mcp.toolNames();
+
+    for (const tool of ["list_swarms", "get_dashboard", "get_events", "list_agents", "get_agent_history"]) {
+      assert.ok(names.includes(tool), `${tool} should remain available`);
+    }
+
+    for (const tool of ["patch_object_config", "get_overlay", "send_task", "restart_agent", "snapshot"]) {
+      assert.ok(!names.includes(tool), `${tool} must be absent in read_only mode`);
+    }
+
+    const discovered = await mcp.call("list_swarms", {});
+    assert.match(discovered.text, /"name": "fix"/);
+
+    const dynamic = await mcp.call("get_dashboard", { swarm: "new-project" });
+    assert.doesNotMatch(dynamic.text, /unknown swarm/);
+    assert.match(dynamic.text, /404/);
   } finally {
     mcp.stop();
   }
@@ -281,6 +319,27 @@ test("tier 3: registered only with enable_operate, operate token routed", async 
 
     const taskCall = fleet.calls.find((c) => c.path.endsWith("/task"));
     assert.equal(taskCall.auth, `Bearer ${OP}`);
+  } finally {
+    mcp.stop();
+  }
+});
+
+
+test("hot-reloading read_only revokes registered write tools before HTTP dispatch", async () => {
+  const configPath = writeFleetConfig({ enableOperate: true });
+  const mcp = new McpChild(configPath);
+  try {
+    await mcp.start();
+    assert.equal((await mcp.call("send_task", { swarm: "fix", agent: "quoter", task: "ping" })).isError, false);
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    cfg.read_only = true;
+    writeFileSync(configPath, JSON.stringify(cfg));
+    utimesSync(configPath, new Date(), new Date(Date.now() + 2000));
+    const before = fleet.calls.length;
+    const result = await mcp.call("send_task", { swarm: "fix", agent: "quoter", task: "must-not-send" });
+    assert.equal(result.isError, true);
+    assert.match(result.text, /read_only/);
+    assert.equal(fleet.calls.length, before);
   } finally {
     mcp.stop();
   }

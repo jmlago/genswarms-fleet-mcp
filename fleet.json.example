@@ -1,6 +1,11 @@
 {
+  "read_only": true,
   "enable_operate": false,
   "max_result_chars": 20000,
+  "defaults": {
+    "dashboard_url": "http://127.0.0.1:4996",
+    "dashboard_token_env": "FLEET_DASHBOARD_TOKEN"
+  },
   "swarms": {
     "bitprime": {
       "dashboard_url": "http://127.0.0.1:4001",

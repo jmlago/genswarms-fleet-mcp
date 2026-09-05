@@ -10,6 +10,10 @@
  *   tier 2 (configure) — engine_url               → schema-gated config PATCH + overlay
  *   tier 3 (operate)   — engine_url AND the fleet-level enable_operate flag
  *
+ * read_only removes tiers 2/3 completely. Agent diagnostics stay available
+ * through the dashboard's read-only routes and never need an engine token.
+ * defaults lets one shared dashboard discover and serve newly cast swarms.
+ *
  * enable_operate is a deliberate, file-level opt-in: tier-3 tools are not
  * even REGISTERED without it, so a harness connected to a default config
  * cannot discover them.
@@ -27,6 +31,8 @@ export interface SwarmSpec {
 
 export interface Fleet {
   swarms: Record<string, SwarmSpec>;
+  defaults?: SwarmSpec;
+  read_only?: boolean;
   enable_operate?: boolean;
   max_result_chars?: number;
 }
@@ -39,8 +45,9 @@ export function loadFleet(): Fleet {
     );
   }
   const fleet = JSON.parse(readFileSync(path, "utf8")) as Fleet;
-  if (!fleet.swarms || Object.keys(fleet.swarms).length === 0) {
-    throw new Error("fleet config has no swarms");
+  fleet.swarms ??= {};
+  if (Object.keys(fleet.swarms).length === 0 && !fleet.defaults?.dashboard_url) {
+    throw new Error("fleet config has no swarms and no discoverable dashboard default");
   }
   return fleet;
 }
@@ -68,12 +75,12 @@ export function currentFleet(): Fleet {
 
 export function swarmSpec(fleet: Fleet, swarm: string): SwarmSpec {
   const spec = fleet.swarms[swarm];
-  if (!spec) {
-    throw new Error(
-      `unknown swarm '${swarm}' — configured: ${Object.keys(fleet.swarms).join(", ")}`,
-    );
-  }
-  return spec;
+  if (spec) return { ...(fleet.defaults ?? {}), ...spec };
+  if (fleet.defaults) return fleet.defaults;
+
+  throw new Error(
+    `unknown swarm '${swarm}' — configured: ${Object.keys(fleet.swarms).join(", ")}`,
+  );
 }
 
 /** Resolve an env-NAME ref to its value; undefined when unset. */
@@ -84,5 +91,5 @@ export function token(envName?: string): string | undefined {
 }
 
 export function anySwarmHas(fleet: Fleet, key: keyof SwarmSpec): boolean {
-  return Object.values(fleet.swarms).some((s) => Boolean(s[key]));
+  return Boolean(fleet.defaults?.[key]) || Object.values(fleet.swarms).some((s) => Boolean(s[key]));
 }
