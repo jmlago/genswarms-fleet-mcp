@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
-    "test": "npm run build && node --test test/"
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "repository": {
     "type": "git",
