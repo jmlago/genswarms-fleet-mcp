@@ -1,6 +1,6 @@
 {
   "name": "genswarms-fleet-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for a fleet of GenSwarms swarms: observe (dashboard), configure (schema-gated overlays), operate (opt-in) — from any MCP harness",
   "license": "MIT",
   "type": "module",
@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
-    "test": "npm run build && node --test test/"
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "repository": {
     "type": "git",

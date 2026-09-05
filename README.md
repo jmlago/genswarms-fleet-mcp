@@ -47,7 +47,7 @@ at `node /path/to/genswarms-fleet-mcp/dist/index.js` with the same env.
 Tiers exist per swarm, derived from what its fleet entry provides; tools are
 only REGISTERED when at least one swarm qualifies.
 
-**Tier 1 — observe** (`dashboard_url`): `get_dashboard`, `get_events`,
+**Tier 1 — observe** (`dashboard_url`): `list_swarms`, `get_dashboard`, `get_events`,
 `get_session_history`, `get_session_logs`, `get_config`. Read-only; config
 responses arrive already redacted against each package's `config_schema` —
 secrets structurally cannot appear here.
@@ -59,12 +59,11 @@ keys always rejected, 422 relayed verbatim). Every change lands in the
 overlay audit trail; a leaked config token's blast radius is the tuning
 surface each package declared.
 
-**Tier 2.5 — agent debugging** (`engine_url`, full engine token):
+**Agent debugging** (prefer `dashboard_url`; legacy fallback to `engine_url`):
 `list_agents`, `get_agent_history`, `get_agent_logs`. The missing surface
-when diagnosing WHY an agent misbehaves — dashboards show sessions, not
-agent turns. Read-only, so not gated by `enable_operate`, but these engine
-routes need the full token (the config-scoped one covers only config
-routes).
+when diagnosing WHY an agent misbehaves. Current dashboards expose these
+as token-gated read routes. A fleet without a dashboard endpoint can use its engine token only when
+`read_only` is false. Dashboard HTTP errors never trigger an engine fallback.
 
 **Tier 3 — operate** (`enable_operate: true` in the fleet file, full engine
 token): `send_task` (the test/probe surface), `restart_agent`,
@@ -82,7 +81,12 @@ file; values come from the MCP server process env:
 
 ```json
 {
+  "read_only": true,
   "enable_operate": false,
+  "defaults": {
+    "dashboard_url": "http://127.0.0.1:4996",
+    "dashboard_token_env": "FLEET_DASHBOARD_TOKEN"
+  },
   "swarms": {
     "wingston": {
       "dashboard_url": "http://wingston-dashboard:4001",
@@ -98,6 +102,13 @@ file; values come from the MCP server process env:
   }
 }
 ```
+
+`read_only: true` removes every configure/operate tool at registration time.
+Switching it on in a running fleet also rejects previously registered engine
+tools before HTTP dispatch. Restart to add tools after widening permissions.
+`defaults` is useful for an embedded fleet: one shared dashboard serves every
+co-located swarm, and `list_swarms` discovers projects cast after the MCP process
+started without duplicating endpoint configuration.
 
 **Hot-reload**: per-call lookups re-read the file when its mtime changes —
 adding a swarm to the fleet needs **no server restart**. (A broken edit
@@ -115,7 +126,7 @@ On the swarm side you need up to two surfaces:
    object (`gsp add swarmidx:genlayerlabs/genswarms-dashboard@… --as
    object:dashboard`). Loopback = no token; exposed = set a token and pass
    its env NAME as `dashboard_token_env`.
-2. **Engine REST (tiers 2/2.5/3)** — the engine BEAM serves it
+2. **Engine REST (tiers 2/3 and legacy agent debugging)** — the engine BEAM serves it
    (`Genswarms.Application.start_web_server(port: …)` or `genswarms.up`)
    with `GENSWARMS_API_TOKEN` (full) and `GENSWARMS_CONFIG_API_TOKEN`
    (config-scoped) set on the ENGINE side.

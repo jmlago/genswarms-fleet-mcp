@@ -24,6 +24,11 @@ export function startFakeFleet({ dashToken, configToken, operateToken }) {
       const p = url.pathname;
 
       // ── dashboard surface (bearer = consumer token) ────────────────────
+      if (req.method === "GET" && p === "/api/swarms") {
+        if (auth !== `Bearer ${dashToken}`) return send(401, { error: "unauthorized" });
+        return send(200, { swarms: [{ name: "fix", status: "running", agents: 1 }], count: 1 });
+      }
+
       if (req.method === "GET" && p.startsWith("/api/swarms/fix/")) {
         // /overlay and /agents/* are ENGINE routes (their own tokens below) —
         // the single fake port serves both surfaces
@@ -47,6 +52,15 @@ export function startFakeFleet({ dashToken, configToken, operateToken }) {
             swarm: "fix",
             objects: [{ name: "whatsapp", config: [{ key: "access_token_env", value: "WA_TOKEN", secret: true }] }],
           });
+        }
+        if (auth === `Bearer ${dashToken}` && p.endsWith("/agents")) {
+          return send(200, { agents: [{ name: "quoter", state: "idle", backend: "tmux" }] });
+        }
+        if (auth === `Bearer ${dashToken}` && p.includes("/agents/") && p.endsWith("/history")) {
+          return send(200, { history: [{ type: "incoming", from: "scope", content: "task" }] });
+        }
+        if (auth === `Bearer ${dashToken}` && p.includes("/agents/") && p.endsWith("/logs")) {
+          return send(200, { logs: [{ role: "user", content: "task" }] });
         }
       }
 
